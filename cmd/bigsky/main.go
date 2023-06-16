@@ -18,6 +18,7 @@ import (
 	"github.com/bluesky-social/indigo/plc"
 	"github.com/bluesky-social/indigo/repomgr"
 	"github.com/bluesky-social/indigo/version"
+	"github.com/bluesky-social/indigo/xrpc"
 
 	_ "net/http/pprof"
 
@@ -90,7 +91,7 @@ func run(args []string) {
 		},
 		&cli.BoolFlag{
 			Name:  "aggregation",
-			Value: true,
+			Value: false,
 		},
 		&cli.StringFlag{
 			Name:  "api-listen",
@@ -173,20 +174,27 @@ func run(args []string) {
 
 		repoman := repomgr.NewRepoManager(db, cstore, kmgr)
 
-		dbp, err := events.NewDbPersistence(db, cstore)
+		dbp, err := events.NewDbPersistence(db, cstore, nil)
 		if err != nil {
 			return fmt.Errorf("setting up db event persistence: %w", err)
 		}
 
 		evtman := events.NewEventManager(dbp)
 
-		go evtman.Run()
-
 		notifman := &notifs.NullNotifs{}
 
 		ix, err := indexer.NewIndexer(db, notifman, evtman, cachedidr, repoman, true, cctx.Bool("aggregation"))
 		if err != nil {
 			return err
+		}
+
+		rlskip := os.Getenv("BSKY_SOCIAL_RATE_LIMIT_SKIP")
+		ix.ApplyPDSClientSettings = func(c *xrpc.Client) {
+			if c.Host == "https://bsky.social" && rlskip != "" {
+				c.Headers = map[string]string{
+					"x-ratelimit-bypass": rlskip,
+				}
+			}
 		}
 
 		repoman.SetEventHandler(func(ctx context.Context, evt *repomgr.RepoEvent) {
